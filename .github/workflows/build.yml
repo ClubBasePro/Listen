@@ -52,11 +52,7 @@ jobs:
             CODE_SIGN_IDENTITY=""
           mkdir -p Payload
           cp -R build/release/Build/Products/Release-iphoneos/Listen.app Payload/
-          # Ad-hoc signature: sideloaders (Sideloadly/AltStore) re-sign with your Apple ID,
-          # but reject binaries that have no code signature at all.
-          codesign --force --sign - --timestamp=none Payload/Listen.app
-          codesign -dv Payload/Listen.app
-          zip -qr Listen.ipa Payload
+          zip -qry Listen.ipa Payload
           ls -lh Listen.ipa
 
       - uses: actions/upload-artifact@v4
