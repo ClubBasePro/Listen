@@ -13,6 +13,8 @@ final class Book {
     var trackURLs: [String]
     var trackNames: [String]
     var addedAt: Date
+    /// Position on the shelf when sorted by "My Order". Defaulted so existing libraries migrate.
+    var shelfOrder: Int = 0
 
     // Progress
     var trackIndex: Int

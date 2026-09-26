@@ -191,3 +191,20 @@ struct ShelfPlank: View {
         }
     }
 }
+
+/// Home-screen style wiggle for Arrange mode. Each book gets a slightly different
+/// speed and angle so the shelf doesn't move in lockstep.
+struct Jiggle: ViewModifier {
+    let seed: String
+
+    func body(content: Content) -> some View {
+        let hash = seed.utf8.reduce(0) { ($0 &* 31 &+ Int($1)) & 0xFFFF }
+        let duration = 0.12 + Double(hash % 5) * 0.012
+        let angle = 1.3 + Double(hash % 3) * 0.3
+        return content.phaseAnimator([-angle, angle]) { view, degrees in
+            view.rotationEffect(.degrees(degrees), anchor: .bottom)
+        } animation: { _ in
+            .easeInOut(duration: duration)
+        }
+    }
+}

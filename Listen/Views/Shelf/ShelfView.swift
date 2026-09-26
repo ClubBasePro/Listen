@@ -19,6 +19,49 @@ enum ShelfFilter: String, CaseIterable, Identifiable {
     }
 }
 
+enum ShelfSort: String, CaseIterable, Identifiable {
+    case custom = "My Order"
+    case title = "Title"
+    case author = "Author"
+    case recent = "Recently Played"
+    case added = "Recently Added"
+
+    var id: Self { self }
+
+    var icon: String {
+        switch self {
+        case .custom: "hand.draw"
+        case .title: "textformat"
+        case .author: "person"
+        case .recent: "clock"
+        case .added: "sparkles"
+        }
+    }
+
+    func sorted(_ books: [Book]) -> [Book] {
+        let byTitle: (Book, Book) -> Bool = { LibraryParser.naturalOrder($0.title, $1.title) }
+        switch self {
+        case .custom:
+            return books.sorted { $0.shelfOrder != $1.shelfOrder ? $0.shelfOrder < $1.shelfOrder : byTitle($0, $1) }
+        case .title:
+            return books.sorted(by: byTitle)
+        case .author:
+            return books.sorted {
+                if $0.author.isEmpty != $1.author.isEmpty { return !$0.author.isEmpty }
+                if $0.author != $1.author { return LibraryParser.naturalOrder($0.author, $1.author) }
+                return byTitle($0, $1)
+            }
+        case .recent:
+            return books.sorted {
+                let a = $0.lastPlayed ?? .distantPast, b = $1.lastPlayed ?? .distantPast
+                return a != b ? a > b : byTitle($0, $1)
+            }
+        case .added:
+            return books.sorted { $0.addedAt != $1.addedAt ? $0.addedAt > $1.addedAt : byTitle($0, $1) }
+        }
+    }
+}
+
 struct ShelfView: View {
     let config: RepoConfig
     let namespace: Namespace.ID
@@ -32,10 +75,15 @@ struct ShelfView: View {
     @State private var filter: ShelfFilter = .all
     @State private var editingBook: Book?
     @State private var tapCount = 0
+    @AppStorage("shelfSort") private var sortRaw = ShelfSort.custom.rawValue
+    @State private var isArranging = false
+    @State private var dropTargetID: String?
+    @State private var reorderCount = 0
 
     private let perShelf = 3
 
-    private var books: [Book] { allBooks.filter { $0.repoKey == config.key } }
+    private var sort: ShelfSort { ShelfSort(rawValue: sortRaw) ?? .custom }
+    private var books: [Book] { sort.sorted(allBooks.filter { $0.repoKey == config.key }) }
     private var visibleBooks: [Book] { books.filter(filter.includes) }
 
     private var continueBook: Book? {
@@ -54,7 +102,9 @@ struct ShelfView: View {
                     errorCard(error).padding(.horizontal, 16).padding(.top, 16)
                 }
 
-                if let book = continueBook {
+                if isArranging {
+                    arrangeHint.padding(.horizontal, 16).padding(.top, 20)
+                } else if let book = continueBook {
                     ContinueCard(book: book, namespace: namespace) { start(book, zoomSource: "hero") }
                         .padding(.horizontal, 16)
                         .padding(.top, 20)
@@ -74,6 +124,9 @@ struct ShelfView: View {
             await library.sync(config: config, context: context, protecting: player.book?.sourceID)
         }
         .sensoryFeedback(.impact(flexibility: .soft), trigger: tapCount)
+        .sensoryFeedback(.impact(weight: .medium), trigger: reorderCount)
+        .sensoryFeedback(.selection, trigger: dropTargetID)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: isArranging)
         .sheet(item: $editingBook) { BookEditView(book: $0) }
     }
 
@@ -94,6 +147,20 @@ struct ShelfView: View {
             if library.isSyncing {
                 ProgressView().tint(.white.opacity(0.7)).padding(.trailing, 6)
             }
+            if isArranging {
+                Button { isArranging = false } label: {
+                    Text("Done")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 18)
+                        .frame(height: 40)
+                        .background(Capsule().fill(Theme.accent))
+                }
+                .buttonStyle(PressableStyle())
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                sortMenu.transition(.scale.combined(with: .opacity))
+            }
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 17, weight: .semibold))
@@ -104,6 +171,52 @@ struct ShelfView: View {
             .buttonStyle(PressableStyle())
             .accessibilityLabel("Settings")
         }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            Section("Sort By") {
+                ForEach(ShelfSort.allCases) { option in
+                    Button {
+                        withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) { sortRaw = option.rawValue }
+                    } label: {
+                        if option == sort {
+                            Label(option.rawValue, systemImage: "checkmark")
+                        } else {
+                            Label(option.rawValue, systemImage: option.icon)
+                        }
+                    }
+                }
+            }
+            Section {
+                Button("Arrange Shelf", systemImage: "square.grid.3x3.middle.filled") { isArranging = true }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .frame(width: 40, height: 40)
+                .background(.ultraThinMaterial, in: Circle())
+        }
+        .accessibilityLabel("Sort and arrange")
+    }
+
+    private var arrangeHint: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "hand.draw.fill")
+                .font(.title2)
+                .foregroundStyle(Theme.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Arrange your shelf").font(.headline).foregroundStyle(.white)
+                Text("Press and hold a book, then drag it onto another book or an empty space.")
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.65))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -190,9 +303,61 @@ struct ShelfView: View {
 
             ShelfPlank().padding(.horizontal, 12)
         }
+        // Dropping on a shelf's empty space puts the book at the end of that shelf.
+        .dropDestination(for: String.self) { ids, _ in
+            guard let id = ids.first else { return false }
+            if let last = slots.compactMap({ $0 }).last {
+                move(id, onto: last, placeAfter: true)
+            } else {
+                move(id, onto: nil)
+            }
+            return true
+        }
     }
 
+    @ViewBuilder
     private func bookButton(_ book: Book) -> some View {
+        if isArranging {
+            arrangeableBook(book)
+        } else {
+            playableBook(book)
+        }
+    }
+
+    private func arrangeableBook(_ book: Book) -> some View {
+        let isTarget = dropTargetID == book.sourceID
+        return BookView(book: book)
+            .modifier(Jiggle(seed: book.sourceID))
+            .scaleEffect(isTarget ? 0.9 : 1)
+            .opacity(isTarget ? 0.55 : 1)
+            .overlay {
+                if isTarget {
+                    Theme.bookShape
+                        .stroke(Theme.accent, lineWidth: 3)
+                        .shadow(color: Theme.accent.opacity(0.8), radius: 8)
+                }
+            }
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isTarget)
+            .frame(maxWidth: .infinity)
+            .draggable(book.sourceID) {
+                BookView(book: book, showsBadges: false)
+                    .frame(width: 96)
+            }
+            .dropDestination(for: String.self) { ids, _ in
+                guard let id = ids.first, id != book.sourceID else { return false }
+                move(id, onto: book)
+                return true
+            } isTargeted: { targeted in
+                if targeted {
+                    dropTargetID = book.sourceID
+                } else if dropTargetID == book.sourceID {
+                    dropTargetID = nil
+                }
+            }
+            .accessibilityHint("Drag to move this book")
+    }
+
+    private func playableBook(_ book: Book) -> some View {
         Button { start(book, zoomSource: book.sourceID) } label: {
             BookView(book: book)
                 .matchedTransitionSource(id: book.sourceID, in: namespace)
@@ -202,6 +367,7 @@ struct ShelfView: View {
         .contextMenu {
             Button("Play", systemImage: "play.fill") { start(book, zoomSource: book.sourceID) }
             Button("Edit Details", systemImage: "pencil") { editingBook = book }
+            Button("Arrange Shelf", systemImage: "square.grid.3x3.middle.filled") { isArranging = true }
             Divider()
             if book.isFinished || book.hasStarted {
                 Button("Mark as Not Started", systemImage: "arrow.counterclockwise") { player.resetProgress(book) }
@@ -239,6 +405,34 @@ struct ShelfView: View {
         .foregroundStyle(.white.opacity(0.85))
         .padding(.horizontal, 40)
         .offset(y: -10)
+    }
+
+    /// Moves a book to where it was dropped and saves the result as "My Order".
+    /// Dropping on a later book takes its place (the target shifts back); dropping on an
+    /// earlier book goes in front of it. With `target == nil` the book goes to the end.
+    private func move(_ id: String, onto target: Book?, placeAfter: Bool? = nil) {
+        var ordered = books
+        guard let from = ordered.firstIndex(where: { $0.sourceID == id }) else { return }
+        let targetIndex = target.flatMap { t in ordered.firstIndex { $0.sourceID == t.sourceID } }
+        let after = placeAfter ?? (targetIndex.map { from < $0 } ?? true)
+
+        let book = ordered.remove(at: from)
+        var index = ordered.count
+        if let target, let t = ordered.firstIndex(where: { $0.sourceID == target.sourceID }) {
+            index = after ? t + 1 : t
+        }
+        ordered.insert(book, at: index)
+        dropTargetID = nil
+        guard index != from || sort != .custom else { return }
+
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+            for (position, item) in ordered.enumerated() where item.shelfOrder != position {
+                item.shelfOrder = position
+            }
+            sortRaw = ShelfSort.custom.rawValue
+        }
+        try? context.save()
+        reorderCount += 1
     }
 
     private func start(_ book: Book, zoomSource: String) {

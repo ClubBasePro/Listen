@@ -93,6 +93,8 @@ final class LibraryStore {
         let key = config.key
         let existing = try context.fetch(FetchDescriptor<Book>(predicate: #Predicate<Book> { $0.repoKey == key }))
         var remaining = Dictionary(existing.map { ($0.sourceID, $0) }, uniquingKeysWith: { first, _ in first })
+        // New books go on the end of the user's arrangement.
+        var nextOrder = (existing.map(\.shelfOrder).max() ?? -1) + 1
 
         for source in sources {
             let sourceID = "\(key):\(source.id)"
@@ -110,8 +112,11 @@ final class LibraryStore {
                     }
                 }
             } else {
-                context.insert(Book(sourceID: sourceID, repoKey: key, title: source.title,
-                                    author: source.author, trackURLs: urls, trackNames: names))
+                let book = Book(sourceID: sourceID, repoKey: key, title: source.title,
+                                author: source.author, trackURLs: urls, trackNames: names)
+                book.shelfOrder = nextOrder
+                nextOrder += 1
+                context.insert(book)
             }
         }
 
